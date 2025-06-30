@@ -1,0 +1,21 @@
+[package]
+name = "audio-latency"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+aya = { workspace = true, features = ["async_tokio"] }
+aya-log = { workspace = true }
+log = { workspace = true }
+env_logger = { workspace = true }
+tokio = { workspace = true }
+bytes = { workspace = true }
+anyhow = { workspace = true }
+clap = { workspace = true }
+libc = "0.2"
+prometheus = { workspace = true }
+axum = { workspace = true }
+lazy_static = "1.4"
+
+[build-dependencies]
+aya = { workspace = true }
