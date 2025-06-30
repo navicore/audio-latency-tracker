@@ -2,7 +2,6 @@
 members = [
     "audio-latency-ebpf",
     "audio-latency",
-    "audio-test-client",
 ]
 resolver = "2"
 
