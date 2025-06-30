@@ -8,22 +8,27 @@ use aya::{
 use aya_log::EbpfLogger;
 use bytes::BytesMut;
 use clap::Parser;
-mod config;
-mod signature;
-mod metrics;
-mod container;
 use log::{debug, info, warn};
 use std::collections::HashMap;
 use std::net::Ipv4Addr;
 use tokio::{signal, sync::mpsc, task};
 
+mod config;
+mod signature;
+mod metrics;
+mod container;
+
+use config::Config;
+use metrics::MetricsCollector;
+use container::{ContainerIdentifier, get_pid_for_connection};
+
 #[derive(Debug, Parser)]
 struct Opt {
-    #[clap(short, long, default_value = "eth0")]
-    iface: String,
+    #[clap(short, long)]
+    iface: Option<String>,
     
-    #[clap(short, long, default_value = "info")]
-    log_level: String,
+    #[clap(short, long)]
+    log_level: Option<String>,
 }
 
 #[repr(C)]
@@ -39,50 +44,111 @@ struct AudioEvent {
 }
 
 struct LatencyTracker {
-    signatures: HashMap<u32, Vec<(u64, String)>>,
+    signatures: HashMap<u32, Vec<(u64, String, String)>>, // (timestamp, source, destination)
+    metrics: MetricsCollector,
+    container_id: ContainerIdentifier,
+    signature_algo: Box<dyn signature::AudioSignature>,
 }
 
 impl LatencyTracker {
-    fn new() -> Self {
+    fn new(config: &Config, metrics: MetricsCollector) -> Self {
         Self {
             signatures: HashMap::new(),
+            metrics,
+            container_id: ContainerIdentifier::new(config.container_runtime.clone()),
+            signature_algo: signature::create_signature(config.signature_algorithm),
         }
     }
     
-    fn process_event(&mut self, event: AudioEvent) {
-        let src = format!(
-            "{}:{}", 
-            Ipv4Addr::from(event.src_ip),
-            event.src_port
-        );
-        let dst = format!(
-            "{}:{}",
-            Ipv4Addr::from(event.dst_ip),
-            event.dst_port
-        );
+    async fn process_event(&mut self, event: AudioEvent, interface: &str, node_name: &str) {
+        let src_ip = Ipv4Addr::from(event.src_ip).to_string();
+        let dst_ip = Ipv4Addr::from(event.dst_ip).to_string();
         
+        // Container identification
+        let mut src_container_id = None;
+        let mut src_pod = None;
+        let mut dst_container_id = None;
+        let mut dst_pod = None;
+        let mut direction = "unknown";
+        
+        // Try to get PID and container info
+        if let Ok(Some(pid)) = get_pid_for_connection(&src_ip, event.src_port, &dst_ip, event.dst_port) {
+            if let Ok(Some(container_info)) = self.container_id.identify_by_pid(pid) {
+                // If we found a container for this PID, it's likely the source (outgoing)
+                src_container_id = Some(container_info.container_id.clone());
+                src_pod = container_info.pod_name.clone();
+                direction = "egress";
+                
+                if let Some(ref pod_name) = src_pod {
+                    self.metrics.update_pod_mapping(src_ip.clone(), pod_name.clone()).await;
+                }
+            }
+        }
+        
+        // Try reverse lookup for ingress
+        if src_container_id.is_none() {
+            if let Ok(Some(pid)) = get_pid_for_connection(&dst_ip, event.dst_port, &src_ip, event.src_port) {
+                if let Ok(Some(container_info)) = self.container_id.identify_by_pid(pid) {
+                    dst_container_id = Some(container_info.container_id.clone());
+                    dst_pod = container_info.pod_name.clone();
+                    direction = "ingress";
+                    
+                    if let Some(ref pod_name) = dst_pod {
+                        self.metrics.update_pod_mapping(dst_ip.clone(), pod_name.clone()).await;
+                    }
+                }
+            }
+        }
+        
+        // Log comprehensive JSON event for every signature sighting
+        let event_json = serde_json::json!({
+            "timestamp_ns": event.timestamp,
+            "signature": event.signature,
+            "node": node_name,
+            "interface": interface,
+            "direction": direction,
+            "src": {
+                "ip": src_ip,
+                "port": event.src_port,
+                "container_id": src_container_id,
+                "pod": src_pod,
+            },
+            "dst": {
+                "ip": dst_ip,
+                "port": event.dst_port,
+                "container_id": dst_container_id,
+                "pod": dst_pod,
+            },
+            "metadata": {
+                "pid": if event.pid > 0 { Some(event.pid) } else { None },
+                "timestamp_human": chrono::DateTime::<chrono::Utc>::from_timestamp_nanos(event.timestamp as i64)
+                    .format("%Y-%m-%dT%H:%M:%S.%9fZ").to_string(),
+            }
+        });
+        
+        // Log as structured JSON
+        info!("AUDIO_SIGNATURE_EVENT: {}", event_json);
+        
+        // Also update metrics for general monitoring (not per-signature)
+        self.metrics.record_signature(&src_ip, event.src_port);
+        
+        // Keep local tracking for immediate feedback (optional)
         let entry = self.signatures.entry(event.signature).or_insert_with(Vec::new);
-        
-        // Check if we've seen this signature before
         if !entry.is_empty() {
             let first_seen = entry[0].0;
             let latency_ns = event.timestamp - first_seen;
             let latency_ms = latency_ns as f64 / 1_000_000.0;
             
-            info!(
-                "Signature {} latency: {:.2}ms (from {} to {} -> {})",
+            debug!(
+                "Local latency calculation: signature {} seen again after {:.2}ms",
                 event.signature,
-                latency_ms,
-                entry[0].1,
-                src,
-                dst
+                latency_ms
             );
         }
+        entry.push((event.timestamp, format!("{}/{}", node_name, interface), direction.to_string()));
         
-        entry.push((event.timestamp, format!("{} -> {}", src, dst)));
-        
-        // Keep only last 10 occurrences of each signature
-        if entry.len() > 10 {
+        // Keep only last 100 occurrences locally
+        if entry.len() > 100 {
             entry.remove(0);
         }
     }
@@ -90,14 +156,37 @@ impl LatencyTracker {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    let opt = Opt::parse();
+    // Load configuration from environment
+    let config = Config::from_env()?;
+    config.validate()?;
     
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(&opt.log_level))
+    // Override with CLI args if provided
+    let opt = Opt::parse();
+    let interface = opt.iface.as_ref().unwrap_or(&config.interface);
+    let log_level = opt.log_level.as_ref().unwrap_or(&config.log_level);
+    
+    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or(log_level))
         .init();
+    
+    info!("Starting audio latency tracker");
+    info!("Configuration: interface={}, signature_algorithm={:?}, k8s_enabled={}", 
+        interface, config.signature_algorithm, config.k8s_enabled);
+    
+    // Initialize metrics collector
+    let metrics = MetricsCollector::new();
+    let metrics_clone = metrics.clone();
+    
+    // Start metrics server
+    let metrics_port = config.metrics_port;
+    task::spawn(async move {
+        if let Err(e) = metrics_clone.start_server(metrics_port).await {
+            warn!("Failed to start metrics server: {}", e);
+        }
+    });
     
     // Load eBPF program
     let data = std::fs::read("target/bpf/audio-latency-ebpf")
-        .context("Failed to read eBPF program - run 'make build-ebpf' first")?;
+        .context("Failed to read eBPF program")?;
     let mut ebpf = Ebpf::load(&data)?;
     
     // Initialize eBPF logger
@@ -105,27 +194,33 @@ async fn main() -> Result<()> {
         warn!("Failed to initialize eBPF logger: {}", e);
     }
     
+    // TODO: Configure port filtering if specified
+    if let Some(ref ports) = config.audio_ports {
+        debug!("Port filtering configured for: {:?}", ports);
+        // This would require adding a map to the eBPF program for port filtering
+    }
+    
     // Attach TC program
     let program: &mut SchedClassifier = ebpf.program_mut("tc_ingress").unwrap().try_into()?;
     program.load()?;
     
     // Get interface index
-    let _iface_idx = get_interface_index(&opt.iface)?;
+    let _iface_idx = get_interface_index(interface)?;
     
     // Create TC qdisc if it doesn't exist
-    if let Err(_) = tc::qdisc_add_clsact(&opt.iface) {
-        debug!("clsact qdisc already exists on {}", opt.iface);
+    if let Err(_) = tc::qdisc_add_clsact(interface) {
+        debug!("clsact qdisc already exists on {}", interface);
     }
     
-    program.attach(&opt.iface, TcAttachType::Ingress)
+    program.attach(interface, TcAttachType::Ingress)
         .context("Failed to attach TC program")?;
     
-    info!("Attached TC program to interface {}", opt.iface);
+    info!("Attached TC program to interface {}", interface);
     
     // Set up perf event array
     let mut perf_array = AsyncPerfEventArray::try_from(ebpf.take_map("AUDIO_EVENTS").unwrap())?;
     
-    let mut tracker = LatencyTracker::new();
+    let mut tracker = LatencyTracker::new(&config, metrics);
     
     // Process events from all CPUs
     let (tx, mut rx) = mpsc::channel::<AudioEvent>(1000);
@@ -163,16 +258,30 @@ async fn main() -> Result<()> {
     // Drop original sender so rx.recv() can return None when all tasks complete
     drop(tx);
     
+    // Get node name from environment or hostname
+    let node_name = config.k8s_node_name.clone()
+        .unwrap_or_else(|| hostname::get()
+            .map(|h| h.to_string_lossy().to_string())
+            .unwrap_or_else(|_| "unknown".to_string()));
+    
+    let interface_clone = interface.to_string();
+    
     // Process events in main task
-    let _process_task = task::spawn(async move {
+    let process_task = task::spawn(async move {
         while let Some(event) = rx.recv().await {
-            tracker.process_event(event);
+            tracker.process_event(event, &interface_clone, &node_name).await;
         }
     });
     
+    info!("Audio latency tracker started successfully");
+    info!("Metrics available at http://0.0.0.0:{}/metrics", config.metrics_port);
     info!("Waiting for audio events... Press Ctrl-C to stop.");
+    
     signal::ctrl_c().await?;
-    info!("Exiting...");
+    info!("Shutting down...");
+    
+    // Cancel the process task
+    process_task.abort();
     
     Ok(())
 }
