@@ -58,9 +58,9 @@ impl MetricsCollector {
     pub async fn record_latency(
         &self,
         source_ip: &str,
-        source_port: u16,
+        _source_port: u16,
         dest_ip: &str,
-        dest_port: u16,
+        _dest_port: u16,
         latency_seconds: f64,
     ) {
         let cache = self.pod_cache.read().await;

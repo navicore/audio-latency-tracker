@@ -141,7 +141,7 @@ mod tests {
     #[test]
     fn test_audio_detection() {
         let mut audio = vec![0x00, 0x80; 64];
-        audio.extend_from_slice(&[0x00, 0x90; 64]); // Non-silence
+        audio.extend(vec![0x00, 0x90; 64]); // Non-silence
         let threshold = 256;
         
         let rolling = RollingHashSignature;
