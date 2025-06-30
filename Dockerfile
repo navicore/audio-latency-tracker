@@ -19,8 +19,11 @@ RUN rustup toolchain install nightly-2024-06-01 && \
 WORKDIR /build
 
 # Copy workspace files
-COPY Cargo.toml Cargo.lock ./
+COPY Cargo.toml ./
 COPY audio-latency-ebpf ./audio-latency-ebpf
+
+# Generate Cargo.lock if it doesn't exist
+RUN cargo generate-lockfile
 
 # Build eBPF program
 RUN cd audio-latency-ebpf && \
@@ -35,9 +38,12 @@ FROM rust:1.80 AS userspace-builder
 WORKDIR /build
 
 # Copy workspace files
-COPY Cargo.toml Cargo.lock ./
+COPY Cargo.toml ./
 COPY audio-latency ./audio-latency
 COPY audio-latency-ebpf ./audio-latency-ebpf
+
+# Generate Cargo.lock if it doesn't exist
+RUN cargo generate-lockfile
 
 # Create dummy eBPF output to satisfy build
 RUN mkdir -p target/bpf && \

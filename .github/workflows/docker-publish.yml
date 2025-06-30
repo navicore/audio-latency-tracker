@@ -1,16 +1,9 @@
 name: Docker Build and Publish
 
 on:
-  push:
-    branches:
-      - main
-      - master
-    tags:
-      - 'v*'
-  pull_request:
-    branches:
-      - main
-      - master
+  release:
+    types: [published]
+  workflow_dispatch:  # Allow manual trigger for testing
 
 env:
   DOCKER_HUB_USERNAME: ${{ secrets.DOCKER_HUB_USERNAME }}

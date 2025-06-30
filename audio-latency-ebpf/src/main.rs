@@ -2,10 +2,10 @@
 #![no_main]
 
 use aya_ebpf::{
+    bindings::{TC_ACT_PIPE, TC_ACT_SHOT},
     macros::{classifier, map},
     maps::{HashMap, PerfEventArray},
     programs::TcContext,
-    bindings::{TC_ACT_PIPE, TC_ACT_SHOT},
 };
 use aya_log_ebpf::info;
 use core::mem;
@@ -80,21 +80,23 @@ static FLOW_STATE: HashMap<u64, u32> = HashMap::with_max_entries(10240, 0);
 fn calculate_audio_signature(data: &[u8]) -> u32 {
     let mut hash: u32 = 0;
     let mut i = 0;
-    
+
     // Look for WAV audio data (skip headers if present)
     // WAV audio is 16-bit samples, so we process 2 bytes at a time
-    while i < data.len() && i < 128 {  // Sample first 128 bytes
+    while i < data.len() && i < 128 {
+        // Sample first 128 bytes
         if i + 1 < data.len() {
             let sample = (data[i] as u16) | ((data[i + 1] as u16) << 8);
-            
+
             // Skip silence (near-zero samples)
-            if sample.abs_diff(0x8000) > 256 {  // 0x8000 is silence in 16-bit PCM
+            if sample.abs_diff(0x8000) > 256 {
+                // 0x8000 is silence in 16-bit PCM
                 hash = hash.wrapping_mul(31).wrapping_add(sample as u32);
             }
         }
         i += 2;
     }
-    
+
     hash
 }
 
@@ -108,42 +110,43 @@ pub fn tc_ingress(ctx: TcContext) -> i32 {
 
 fn try_tc_ingress(ctx: TcContext) -> Result<i32, i64> {
     let eth_hdr: EthHdr = ctx.load(0).map_err(|_| 1i64)?;
-    
+
     // Only process IPv4 packets (0x0800 in network byte order)
     if eth_hdr.h_proto != 0x0008u16 {
         return Ok(TC_ACT_PIPE);
     }
-    
+
     let ip_hdr: IpHdr = ctx.load(mem::size_of::<EthHdr>()).map_err(|_| 1i64)?;
-    
+
     // Only process TCP packets
     if ip_hdr.protocol != 6 {
         return Ok(TC_ACT_PIPE);
     }
-    
+
     let tcp_hdr_offset = mem::size_of::<EthHdr>() + (ip_hdr.ihl() * 4) as usize;
     let tcp_hdr: TcpHdr = ctx.load(tcp_hdr_offset).map_err(|_| 1i64)?;
-    
+
     // Calculate payload offset
     let payload_offset = tcp_hdr_offset + (tcp_hdr.doff() * 4) as usize;
-    
+
     // Try to read some payload data
     let payload_len = ctx.len() as usize - payload_offset;
-    if payload_len < 64 {  // Need at least 64 bytes to analyze
+    if payload_len < 64 {
+        // Need at least 64 bytes to analyze
         return Ok(TC_ACT_PIPE);
     }
-    
+
     // Read payload data
     let mut buf = [0u8; 128];
     let read_len = core::cmp::min(payload_len, 128);
-    
+
     for i in 0..read_len {
         buf[i] = ctx.load::<u8>(payload_offset + i).map_err(|_| 1i64)?;
     }
-    
+
     // Calculate audio signature
     let signature = calculate_audio_signature(&buf[..read_len]);
-    
+
     // Only report non-zero signatures (non-silence)
     if signature != 0 {
         let event = AudioEvent {
@@ -153,11 +156,11 @@ fn try_tc_ingress(ctx: TcContext) -> Result<i32, i64> {
             dst_ip: u32::from_be(ip_hdr.daddr),
             src_port: u16::from_be(tcp_hdr.source),
             dst_port: u16::from_be(tcp_hdr.dest),
-            pid: 0,  // TC can't get PID directly
+            pid: 0, // TC can't get PID directly
         };
-        
+
         AUDIO_EVENTS.output(&ctx, &event, 0);
-        
+
         info!(
             &ctx,
             "Audio signature detected: {} from {}:{} to {}:{}",
@@ -168,7 +171,7 @@ fn try_tc_ingress(ctx: TcContext) -> Result<i32, i64> {
             u16::from_be(tcp_hdr.dest)
         );
     }
-    
+
     Ok(TC_ACT_PIPE)
 }
 
