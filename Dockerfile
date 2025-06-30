@@ -21,6 +21,7 @@ WORKDIR /build
 # Copy workspace files
 COPY Cargo.toml ./
 COPY audio-latency-ebpf ./audio-latency-ebpf
+COPY audio-latency ./audio-latency
 
 # Generate Cargo.lock if it doesn't exist
 RUN cargo generate-lockfile
