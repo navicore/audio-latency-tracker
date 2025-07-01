@@ -7,7 +7,20 @@ use crate::config::ContainerRuntime;
 pub struct ContainerInfo {
     pub container_id: String,
     pub pod_name: Option<String>,
+    
+    /// Kubernetes namespace of the pod.
+    /// Currently not populated as we focus on pod names, but will be
+    /// essential for multi-tenant environments where pod names may collide.
+    /// TODO: Fetch namespace from K8s API or container labels
+    #[allow(dead_code)]
     pub namespace: Option<String>,
+    
+    /// The container runtime that created this container.
+    /// Stored for debugging and to handle runtime-specific behaviors,
+    /// but not currently used in processing. Will be important when
+    /// we need to handle different runtime label formats.
+    /// TODO: Use for runtime-specific container metadata extraction
+    #[allow(dead_code)]
     pub runtime: ContainerRuntime,
 }
 
