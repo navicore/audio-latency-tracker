@@ -12,7 +12,15 @@ pub struct Config {
     // Audio Processing
     pub audio_ports: Option<Vec<u16>>,
     pub signature_window_size: usize,
+    
+    /// PCM threshold for detecting silence in audio samples.
+    /// Currently the eBPF program has this hardcoded, but once we implement
+    /// dynamic configuration via eBPF maps, this will be used to filter out
+    /// silent periods to avoid tracking non-audio data.
+    /// TODO: Pass this to eBPF via a config map in v2
+    #[allow(dead_code)]
     pub silence_threshold: u16,
+    
     pub signature_algorithm: SignatureAlgorithm,
     
     // Kubernetes
@@ -22,7 +30,15 @@ pub struct Config {
     
     // Performance
     pub max_flows: u32,
+    
+    /// Timeout in milliseconds for flow state entries in eBPF maps.
+    /// This will be used when we implement stateful packet reassembly
+    /// to handle audio data that spans multiple packets. The eBPF program
+    /// will track partial signatures and expire them after this timeout.
+    /// TODO: Implement stateful packet reassembly in v2
+    #[allow(dead_code)]
     pub flow_timeout_ms: u64,
+    
     pub perf_buffer_size: u32,
 }
 
