@@ -9,21 +9,19 @@ use prometheus::{
     HistogramVec, IntCounterVec, IntCounter, TextEncoder, Encoder,
 };
 use std::net::SocketAddr;
-use std::sync::Arc;
-use tokio::sync::RwLock;
 
 lazy_static::lazy_static! {
     static ref AUDIO_LATENCY: HistogramVec = register_histogram_vec!(
         "audio_latency_seconds",
         "Audio latency between components",
-        &["source_pod", "dest_pod", "source_ip", "dest_ip"],
+        &["source_ip", "dest_ip"],
         vec![0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0, 2.5, 5.0]
     ).unwrap();
     
     static ref AUDIO_SIGNATURES: IntCounterVec = register_int_counter_vec!(
         "audio_signatures_total",
         "Total audio signatures detected",
-        &["pod", "ip", "port"]
+        &["ip", "port"]
     ).unwrap();
     
     static ref SIGNATURE_COLLISIONS: IntCounter = register_int_counter!(
@@ -39,20 +37,11 @@ lazy_static::lazy_static! {
 }
 
 #[derive(Clone)]
-pub struct MetricsCollector {
-    pod_cache: Arc<RwLock<PodCache>>,
-}
-
-#[derive(Default)]
-struct PodCache {
-    ip_to_pod: std::collections::HashMap<String, String>,
-}
+pub struct MetricsCollector {}
 
 impl MetricsCollector {
     pub fn new() -> Self {
-        Self {
-            pod_cache: Arc::new(RwLock::new(PodCache::default())),
-        }
+        Self {}
     }
     
     /// Records latency between two endpoints in Prometheus metrics.
@@ -69,26 +58,14 @@ impl MetricsCollector {
         _dest_port: u16,
         latency_seconds: f64,
     ) {
-        let cache = self.pod_cache.read().await;
-        
-        let source_pod = cache.ip_to_pod.get(source_ip)
-            .cloned()
-            .unwrap_or_else(|| format!("unknown-{}", source_ip));
-        let dest_pod = cache.ip_to_pod.get(dest_ip)
-            .cloned()
-            .unwrap_or_else(|| format!("unknown-{}", dest_ip));
-        
         AUDIO_LATENCY
-            .with_label_values(&[&source_pod, &dest_pod, source_ip, dest_ip])
+            .with_label_values(&[source_ip, dest_ip])
             .observe(latency_seconds);
     }
     
     pub fn record_signature(&self, ip: &str, port: u16) {
-        // For now, use IP as pod identifier
-        let pod = format!("{}:{}", ip, port);
-        
         AUDIO_SIGNATURES
-            .with_label_values(&[&pod, ip, &port.to_string()])
+            .with_label_values(&[ip, &port.to_string()])
             .inc();
     }
     

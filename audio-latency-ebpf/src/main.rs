@@ -65,7 +65,6 @@ pub struct AudioEvent {
     pub dst_ip: u32,
     pub src_port: u16,
     pub dst_port: u16,
-    pub pid: u32,
 }
 
 // Maps
@@ -156,7 +155,6 @@ fn try_tc_ingress(ctx: TcContext) -> Result<i32, i64> {
             dst_ip: u32::from_be(ip_hdr.daddr),
             src_port: u16::from_be(tcp_hdr.source),
             dst_port: u16::from_be(tcp_hdr.dest),
-            pid: 0, // TC can't get PID directly
         };
 
         AUDIO_EVENTS.output(&ctx, &event, 0);

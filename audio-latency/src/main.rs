@@ -37,7 +37,6 @@ struct AudioEvent {
     dst_ip: u32,
     src_port: u16,
     dst_port: u16,
-    pid: u32,
 }
 
 struct LatencyTracker {
@@ -57,16 +56,9 @@ impl LatencyTracker {
         let src_ip = Ipv4Addr::from(event.src_ip).to_string();
         let dst_ip = Ipv4Addr::from(event.dst_ip).to_string();
         
-        // Pod identification via IP lookup
-        // TODO: Implement K8s pod watcher to maintain IP->Pod mapping
-        let src_pod: Option<&str> = None;
-        let dst_pod: Option<&str> = None;
-        let direction = "unknown";
-        
         // Calculate timestamp before JSON creation
         let now = chrono::Utc::now();
         let timestamp_human = now.format("%Y-%m-%dT%H:%M:%S.%9fZ").to_string();
-        let pid = if event.pid > 0 { Some(event.pid) } else { None };
         
         // Log comprehensive JSON event for every signature sighting
         let event_json = serde_json::json!({
@@ -74,19 +66,15 @@ impl LatencyTracker {
             "signature": event.signature,
             "node": node_name,
             "interface": interface,
-            "direction": direction,
             "src": {
                 "ip": src_ip,
                 "port": event.src_port,
-                "pod": src_pod,
             },
             "dst": {
                 "ip": dst_ip,
                 "port": event.dst_port,
-                "pod": dst_pod,
             },
             "metadata": {
-                "pid": pid,
                 "timestamp_human": timestamp_human
             }
         });
@@ -110,7 +98,7 @@ impl LatencyTracker {
                 latency_ms
             );
         }
-        entry.push((event.timestamp, format!("{}/{}", node_name, interface), direction.to_string()));
+        entry.push((event.timestamp, format!("{}/{}", node_name, interface), format!("{}:{}", src_ip, event.src_port)));
         
         // Keep only last 100 occurrences locally
         if entry.len() > 100 {
