@@ -60,8 +60,8 @@ The tracker exports the following Prometheus metrics:
 
 Example query for p99 latency:
 ```promql
-histogram_quantile(0.99, 
-  sum(rate(audio_latency_seconds_bucket[5m])) 
+histogram_quantile(0.99,
+  sum(rate(audio_latency_seconds_bucket[5m]))
   by (source_pod, dest_pod, le))
 ```
 
