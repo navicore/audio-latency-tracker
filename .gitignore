@@ -3,6 +3,8 @@ target/
 Cargo.lock
 **/*.rs.bk
 
+chart
+
 # eBPF
 *.o
 *.elf

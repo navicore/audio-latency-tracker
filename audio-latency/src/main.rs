@@ -19,7 +19,6 @@ mod container;
 
 use config::Config;
 use metrics::MetricsCollector;
-use container::{ContainerIdentifier, get_pid_for_connection};
 
 #[derive(Debug, Parser)]
 struct Opt {
@@ -45,15 +44,13 @@ struct AudioEvent {
 struct LatencyTracker {
     signatures: HashMap<u32, Vec<(u64, String, String)>>, // (timestamp, source, destination)
     metrics: MetricsCollector,
-    container_id: ContainerIdentifier,
 }
 
 impl LatencyTracker {
-    fn new(config: &Config, metrics: MetricsCollector) -> Self {
+    fn new(_config: &Config, metrics: MetricsCollector) -> Self {
         Self {
             signatures: HashMap::new(),
             metrics,
-            container_id: ContainerIdentifier::new(config.container_runtime.clone()),
         }
     }
     
@@ -61,41 +58,11 @@ impl LatencyTracker {
         let src_ip = Ipv4Addr::from(event.src_ip).to_string();
         let dst_ip = Ipv4Addr::from(event.dst_ip).to_string();
         
-        // Container identification
-        let mut src_container_id = None;
-        let mut src_pod = None;
-        let mut dst_container_id = None;
-        let mut dst_pod = None;
-        let mut direction = "unknown";
-        
-        // Try to get PID and container info
-        if let Ok(Some(pid)) = get_pid_for_connection(&src_ip, event.src_port, &dst_ip, event.dst_port) {
-            if let Ok(Some(container_info)) = self.container_id.identify_by_pid(pid) {
-                // If we found a container for this PID, it's likely the source (outgoing)
-                src_container_id = Some(container_info.container_id.clone());
-                src_pod = container_info.pod_name.clone();
-                direction = "egress";
-                
-                if let Some(ref pod_name) = src_pod {
-                    self.metrics.update_pod_mapping(src_ip.clone(), pod_name.clone()).await;
-                }
-            }
-        }
-        
-        // Try reverse lookup for ingress
-        if src_container_id.is_none() {
-            if let Ok(Some(pid)) = get_pid_for_connection(&dst_ip, event.dst_port, &src_ip, event.src_port) {
-                if let Ok(Some(container_info)) = self.container_id.identify_by_pid(pid) {
-                    dst_container_id = Some(container_info.container_id.clone());
-                    dst_pod = container_info.pod_name.clone();
-                    direction = "ingress";
-                    
-                    if let Some(ref pod_name) = dst_pod {
-                        self.metrics.update_pod_mapping(dst_ip.clone(), pod_name.clone()).await;
-                    }
-                }
-            }
-        }
+        // Pod identification via IP lookup
+        // TODO: Implement K8s pod watcher to maintain IP->Pod mapping
+        let src_pod = None;
+        let dst_pod = None;
+        let direction = "unknown";
         
         // Log comprehensive JSON event for every signature sighting
         let event_json = serde_json::json!({
@@ -107,19 +74,21 @@ impl LatencyTracker {
             "src": {
                 "ip": src_ip,
                 "port": event.src_port,
-                "container_id": src_container_id,
                 "pod": src_pod,
             },
             "dst": {
                 "ip": dst_ip,
                 "port": event.dst_port,
-                "container_id": dst_container_id,
                 "pod": dst_pod,
             },
             "metadata": {
                 "pid": if event.pid > 0 { Some(event.pid) } else { None },
-                "timestamp_human": chrono::DateTime::<chrono::Utc>::from_timestamp_nanos(event.timestamp as i64)
-                    .format("%Y-%m-%dT%H:%M:%S.%9fZ").to_string(),
+                "timestamp_human": {
+                    // bpf_ktime_get_ns() returns nanoseconds since boot, not Unix epoch
+                    // For now, just use current time as approximation
+                    let now = chrono::Utc::now();
+                    now.format("%Y-%m-%dT%H:%M:%S.%9fZ").to_string()
+                },
             }
         });
         
