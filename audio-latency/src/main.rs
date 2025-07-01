@@ -14,7 +14,6 @@ use std::net::Ipv4Addr;
 use tokio::{signal, sync::mpsc, task};
 
 mod config;
-mod signature;
 mod metrics;
 mod container;
 
