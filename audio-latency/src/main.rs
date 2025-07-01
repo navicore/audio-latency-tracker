@@ -47,7 +47,6 @@ struct LatencyTracker {
     signatures: HashMap<u32, Vec<(u64, String, String)>>, // (timestamp, source, destination)
     metrics: MetricsCollector,
     container_id: ContainerIdentifier,
-    signature_algo: Box<dyn signature::AudioSignature>,
 }
 
 impl LatencyTracker {
@@ -56,7 +55,6 @@ impl LatencyTracker {
             signatures: HashMap::new(),
             metrics,
             container_id: ContainerIdentifier::new(config.container_runtime.clone()),
-            signature_algo: signature::create_signature(config.signature_algorithm),
         }
     }
     
