@@ -26,7 +26,6 @@ pub struct Config {
     // Kubernetes
     pub k8s_enabled: bool,
     pub k8s_node_name: Option<String>,
-    pub container_runtime: ContainerRuntime,
     
     // Performance
     pub max_flows: u32,
@@ -58,28 +57,6 @@ impl FromStr for SignatureAlgorithm {
             "crc32" => Ok(SignatureAlgorithm::Crc32),
             "xxhash" => Ok(SignatureAlgorithm::XxHash),
             _ => anyhow::bail!("Unknown signature algorithm: {}", s),
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub enum ContainerRuntime {
-    Docker,
-    Containerd,
-    Crio,
-    AutoDetect,
-}
-
-impl FromStr for ContainerRuntime {
-    type Err = anyhow::Error;
-    
-    fn from_str(s: &str) -> Result<Self> {
-        match s.to_lowercase().as_str() {
-            "docker" => Ok(ContainerRuntime::Docker),
-            "containerd" => Ok(ContainerRuntime::Containerd),
-            "crio" => Ok(ContainerRuntime::Crio),
-            "auto" | "auto-detect" => Ok(ContainerRuntime::AutoDetect),
-            _ => anyhow::bail!("Unknown container runtime: {}", s),
         }
     }
 }
@@ -127,10 +104,6 @@ impl Config {
                 .parse()
                 .unwrap_or(false),
             k8s_node_name: env::var("K8S_NODE_NAME").ok(),
-            container_runtime: env::var("CONTAINER_RUNTIME")
-                .unwrap_or_else(|_| "auto".to_string())
-                .parse()
-                .context("Invalid CONTAINER_RUNTIME")?,
             
             // Performance
             max_flows: env::var("MAX_FLOWS")

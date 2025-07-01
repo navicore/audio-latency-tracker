@@ -15,7 +15,6 @@ use tokio::{signal, sync::mpsc, task};
 
 mod config;
 mod metrics;
-mod container;
 
 use config::Config;
 use metrics::MetricsCollector;
@@ -60,9 +59,14 @@ impl LatencyTracker {
         
         // Pod identification via IP lookup
         // TODO: Implement K8s pod watcher to maintain IP->Pod mapping
-        let src_pod = None;
-        let dst_pod = None;
+        let src_pod: Option<&str> = None;
+        let dst_pod: Option<&str> = None;
         let direction = "unknown";
+        
+        // Calculate timestamp before JSON creation
+        let now = chrono::Utc::now();
+        let timestamp_human = now.format("%Y-%m-%dT%H:%M:%S.%9fZ").to_string();
+        let pid = if event.pid > 0 { Some(event.pid) } else { None };
         
         // Log comprehensive JSON event for every signature sighting
         let event_json = serde_json::json!({
@@ -82,13 +86,8 @@ impl LatencyTracker {
                 "pod": dst_pod,
             },
             "metadata": {
-                "pid": if event.pid > 0 { Some(event.pid) } else { None },
-                "timestamp_human": {
-                    // bpf_ktime_get_ns() returns nanoseconds since boot, not Unix epoch
-                    // For now, just use current time as approximation
-                    let now = chrono::Utc::now();
-                    now.format("%Y-%m-%dT%H:%M:%S.%9fZ").to_string()
-                },
+                "pid": pid,
+                "timestamp_human": timestamp_human
             }
         });
         

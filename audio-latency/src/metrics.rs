@@ -116,11 +116,6 @@ impl MetricsCollector {
             .inc();
     }
     
-    pub async fn update_pod_mapping(&self, ip: String, pod_name: String) {
-        let mut cache = self.pod_cache.write().await;
-        cache.ip_to_pod.insert(ip, pod_name);
-    }
-    
     pub async fn start_server(self, port: u16) -> Result<()> {
         let addr = SocketAddr::from(([0, 0, 0, 0], port));
         
