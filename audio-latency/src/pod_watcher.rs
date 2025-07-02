@@ -85,7 +85,7 @@ impl PodWatcher {
 
     pub async fn start(self) -> Result<()> {
         use kube::runtime::watcher::Config;
-        
+
         let api: Api<Pod> = Api::all(self.client.clone());
         let watcher = watcher(api, Config::default());
 
@@ -113,11 +113,13 @@ impl PodWatcher {
     async fn handle_pod_event(&self, pod: &Pod) {
         let pod_name = pod.name_any();
         let namespace = pod.namespace().unwrap_or_default();
-        
+
         // Extract pod IP
-        let pod_ip = match pod.status.as_ref()
+        let pod_ip = match pod
+            .status
+            .as_ref()
             .and_then(|s| s.pod_ip.as_ref())
-            .and_then(|ip| IpAddr::from_str(ip).ok()) 
+            .and_then(|ip| IpAddr::from_str(ip).ok())
         {
             Some(ip) => ip,
             None => {
@@ -192,13 +194,13 @@ fn extract_workload_info_from_pod(pod: &Pod) -> (String, String) {
                 _ => {}
             }
         }
-        
+
         // If we have any owner, use it
         if let Some(owner) = owner_refs.first() {
             return (owner.kind.clone(), owner.name.clone());
         }
     }
-    
+
     // No owner reference - probably a standalone pod
     ("Pod".to_string(), pod.name_any())
 }
@@ -207,12 +209,12 @@ fn extract_workload_info_from_pod(pod: &Pod) -> (String, String) {
 mod tests {
     use super::*;
     use k8s_openapi::apimachinery::pkg::apis::meta::v1::OwnerReference;
-    
+
     #[test]
     fn test_pod_cache_operations() {
         let cache = PodCache::new();
         let runtime = tokio::runtime::Runtime::new().unwrap();
-        
+
         runtime.block_on(async {
             // Test insert and get
             let metadata = PodMetadata {
@@ -222,63 +224,59 @@ mod tests {
                 workload_kind: "Deployment".to_string(),
                 workload_name: "test-app".to_string(),
             };
-            
+
             let ip: IpAddr = "10.0.0.1".parse().unwrap();
             cache.insert(ip, metadata.clone()).await;
-            
+
             let retrieved = cache.get(&ip).await;
             assert!(retrieved.is_some());
             assert_eq!(retrieved.unwrap().pod_name, "test-pod");
-            
+
             // Test remove
             cache.remove(&ip).await;
             assert!(cache.get(&ip).await.is_none());
         });
     }
-    
+
     #[test]
     fn test_workload_extraction_deployment() {
         let mut pod = Pod::default();
-        pod.metadata.owner_references = Some(vec![
-            OwnerReference {
-                api_version: "apps/v1".to_string(),
-                kind: "ReplicaSet".to_string(),
-                name: "my-app-5d7f8c9b6".to_string(),
-                uid: "12345".to_string(),
-                controller: Some(true),
-                block_owner_deletion: Some(true),
-            }
-        ]);
-        
+        pod.metadata.owner_references = Some(vec![OwnerReference {
+            api_version: "apps/v1".to_string(),
+            kind: "ReplicaSet".to_string(),
+            name: "my-app-5d7f8c9b6".to_string(),
+            uid: "12345".to_string(),
+            controller: Some(true),
+            block_owner_deletion: Some(true),
+        }]);
+
         let (kind, name) = extract_workload_info_from_pod(&pod);
         assert_eq!(kind, "Deployment");
         assert_eq!(name, "my-app");
     }
-    
+
     #[test]
     fn test_workload_extraction_daemonset() {
         let mut pod = Pod::default();
-        pod.metadata.owner_references = Some(vec![
-            OwnerReference {
-                api_version: "apps/v1".to_string(),
-                kind: "DaemonSet".to_string(),
-                name: "node-monitor".to_string(),
-                uid: "12345".to_string(),
-                controller: Some(true),
-                block_owner_deletion: Some(true),
-            }
-        ]);
-        
+        pod.metadata.owner_references = Some(vec![OwnerReference {
+            api_version: "apps/v1".to_string(),
+            kind: "DaemonSet".to_string(),
+            name: "node-monitor".to_string(),
+            uid: "12345".to_string(),
+            controller: Some(true),
+            block_owner_deletion: Some(true),
+        }]);
+
         let (kind, name) = extract_workload_info_from_pod(&pod);
         assert_eq!(kind, "DaemonSet");
         assert_eq!(name, "node-monitor");
     }
-    
+
     #[test]
     fn test_workload_extraction_no_owner() {
         let mut pod = Pod::default();
         pod.metadata.name = Some("standalone-pod".to_string());
-        
+
         let (kind, name) = extract_workload_info_from_pod(&pod);
         assert_eq!(kind, "Pod");
         assert_eq!(name, "standalone-pod");

@@ -1,6 +1,6 @@
+use anyhow::{Context, Result};
 use std::env;
 use std::str::FromStr;
-use anyhow::{Context, Result};
 
 #[derive(Debug, Clone)]
 pub struct Config {
@@ -8,11 +8,11 @@ pub struct Config {
     pub interface: String,
     pub log_level: String,
     pub metrics_port: u16,
-    
+
     // Audio Processing
     pub audio_ports: Option<Vec<u16>>,
     pub signature_window_size: usize,
-    
+
     /// PCM threshold for detecting silence in audio samples.
     /// Currently the eBPF program has this hardcoded, but once we implement
     /// dynamic configuration via eBPF maps, this will be used to filter out
@@ -20,16 +20,16 @@ pub struct Config {
     /// TODO: Pass this to eBPF via a config map in v2
     #[allow(dead_code)]
     pub silence_threshold: u16,
-    
+
     pub signature_algorithm: SignatureAlgorithm,
-    
+
     // Kubernetes
     pub k8s_enabled: bool,
     pub k8s_node_name: Option<String>,
-    
+
     // Performance
     pub max_flows: u32,
-    
+
     /// Timeout in milliseconds for flow state entries in eBPF maps.
     /// This will be used when we implement stateful packet reassembly
     /// to handle audio data that spans multiple packets. The eBPF program
@@ -37,7 +37,7 @@ pub struct Config {
     /// TODO: Implement stateful packet reassembly in v2
     #[allow(dead_code)]
     pub flow_timeout_ms: u64,
-    
+
     pub perf_buffer_size: u32,
 }
 
@@ -50,7 +50,7 @@ pub enum SignatureAlgorithm {
 
 impl FromStr for SignatureAlgorithm {
     type Err = anyhow::Error;
-    
+
     fn from_str(s: &str) -> Result<Self> {
         match s.to_lowercase().as_str() {
             "rolling_hash" => Ok(SignatureAlgorithm::RollingHash),
@@ -71,7 +71,7 @@ impl Config {
                 .unwrap_or_else(|_| "9090".to_string())
                 .parse()
                 .context("Invalid METRICS_PORT")?,
-            
+
             // Audio Processing
             audio_ports: env::var("AUDIO_PORTS").ok().map(|s| {
                 s.split(',')
@@ -90,7 +90,7 @@ impl Config {
                 .unwrap_or_else(|_| "xxhash".to_string())
                 .parse()
                 .context("Invalid SIGNATURE_ALGORITHM")?,
-            
+
             // Kubernetes
             k8s_enabled: env::var("K8S_ENABLED")
                 .unwrap_or_else(|_| {
@@ -104,7 +104,7 @@ impl Config {
                 .parse()
                 .unwrap_or(false),
             k8s_node_name: env::var("K8S_NODE_NAME").ok(),
-            
+
             // Performance
             max_flows: env::var("MAX_FLOWS")
                 .unwrap_or_else(|_| "10000".to_string())
@@ -120,7 +120,7 @@ impl Config {
                 .context("Invalid PERF_BUFFER_SIZE")?,
         })
     }
-    
+
     pub fn validate(&self) -> Result<()> {
         if self.signature_window_size == 0 {
             anyhow::bail!("SIGNATURE_WINDOW_SIZE must be greater than 0");
@@ -141,7 +141,7 @@ impl Config {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_signature_algorithm_parsing() {
         assert!(matches!(
@@ -158,7 +158,7 @@ mod tests {
         ));
         assert!(SignatureAlgorithm::from_str("invalid").is_err());
     }
-    
+
     #[test]
     fn test_config_validation() {
         let mut config = Config {
@@ -175,32 +175,32 @@ mod tests {
             flow_timeout_ms: 30000,
             perf_buffer_size: 1024,
         };
-        
+
         // Valid config
         assert!(config.validate().is_ok());
-        
+
         // Invalid signature_window_size
         config.signature_window_size = 0;
         assert!(config.validate().is_err());
         config.signature_window_size = 2048;
         assert!(config.validate().is_err());
         config.signature_window_size = 256; // Reset
-        
+
         // Invalid max_flows
         config.max_flows = 0;
         assert!(config.validate().is_err());
         config.max_flows = 10000; // Reset
-        
+
         // Invalid perf_buffer_size
         config.perf_buffer_size = 0;
         assert!(config.validate().is_err());
         config.perf_buffer_size = 1023; // Not power of 2
         assert!(config.validate().is_err());
         config.perf_buffer_size = 1024; // Reset
-        
+
         assert!(config.validate().is_ok());
     }
-    
+
     #[test]
     fn test_k8s_auto_detection() {
         // This test would normally check if K8S_ENABLED auto-detects
@@ -220,7 +220,7 @@ mod tests {
             flow_timeout_ms: 30000,
             perf_buffer_size: 1024,
         };
-        
+
         assert!(!config.k8s_enabled);
         assert!(config.k8s_node_name.is_none());
     }
