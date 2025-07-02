@@ -137,3 +137,91 @@ impl Config {
         Ok(())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    
+    #[test]
+    fn test_signature_algorithm_parsing() {
+        assert!(matches!(
+            SignatureAlgorithm::from_str("rolling_hash").unwrap(),
+            SignatureAlgorithm::RollingHash
+        ));
+        assert!(matches!(
+            SignatureAlgorithm::from_str("crc32").unwrap(),
+            SignatureAlgorithm::Crc32
+        ));
+        assert!(matches!(
+            SignatureAlgorithm::from_str("xxhash").unwrap(),
+            SignatureAlgorithm::XxHash
+        ));
+        assert!(SignatureAlgorithm::from_str("invalid").is_err());
+    }
+    
+    #[test]
+    fn test_config_validation() {
+        let mut config = Config {
+            interface: "eth0".to_string(),
+            log_level: "info".to_string(),
+            metrics_port: 9090,
+            audio_ports: None,
+            signature_window_size: 256,
+            silence_threshold: 256,
+            signature_algorithm: SignatureAlgorithm::XxHash,
+            k8s_enabled: true,
+            k8s_node_name: Some("node-1".to_string()),
+            max_flows: 10000,
+            flow_timeout_ms: 30000,
+            perf_buffer_size: 1024,
+        };
+        
+        // Valid config
+        assert!(config.validate().is_ok());
+        
+        // Invalid signature_window_size
+        config.signature_window_size = 0;
+        assert!(config.validate().is_err());
+        config.signature_window_size = 2048;
+        assert!(config.validate().is_err());
+        config.signature_window_size = 256; // Reset
+        
+        // Invalid max_flows
+        config.max_flows = 0;
+        assert!(config.validate().is_err());
+        config.max_flows = 10000; // Reset
+        
+        // Invalid perf_buffer_size
+        config.perf_buffer_size = 0;
+        assert!(config.validate().is_err());
+        config.perf_buffer_size = 1023; // Not power of 2
+        assert!(config.validate().is_err());
+        config.perf_buffer_size = 1024; // Reset
+        
+        assert!(config.validate().is_ok());
+    }
+    
+    #[test]
+    fn test_k8s_auto_detection() {
+        // This test would normally check if K8S_ENABLED auto-detects
+        // but we can't reliably test file system checks in unit tests
+        // Just verify the config field exists and can be set
+        let config = Config {
+            interface: "eth0".to_string(),
+            log_level: "info".to_string(),
+            metrics_port: 9090,
+            audio_ports: Some(vec![8080, 9090]),
+            signature_window_size: 256,
+            silence_threshold: 256,
+            signature_algorithm: SignatureAlgorithm::XxHash,
+            k8s_enabled: false,
+            k8s_node_name: None,
+            max_flows: 10000,
+            flow_timeout_ms: 30000,
+            perf_buffer_size: 1024,
+        };
+        
+        assert!(!config.k8s_enabled);
+        assert!(config.k8s_node_name.is_none());
+    }
+}

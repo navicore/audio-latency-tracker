@@ -1,5 +1,5 @@
 # Build stage for eBPF
-FROM rust:1.80 AS ebpf-builder
+FROM rust:1.88 AS ebpf-builder
 
 # Install dependencies for eBPF compilation
 RUN apt-get update && apt-get install -y \
@@ -34,7 +34,7 @@ RUN cd audio-latency-ebpf && \
     --release
 
 # Build stage for userspace
-FROM rust:1.80 AS userspace-builder
+FROM rust:1.88 AS userspace-builder
 
 WORKDIR /build
 
