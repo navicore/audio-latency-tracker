@@ -11,7 +11,7 @@ use std::net::IpAddr;
 use std::str::FromStr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, warn};
 
 #[derive(Clone, Debug)]
 pub struct PodMetadata {
@@ -89,9 +89,10 @@ impl PodWatcher {
         let api: Api<Pod> = Api::all(self.client.clone());
         let watcher = watcher(api, Config::default());
 
-        info!("Starting pod watcher");
+        debug!("Starting pod watcher");
 
         let mut stream = watcher.applied_objects().boxed();
+        let mut last_cache_report = std::time::Instant::now();
 
         while let Some(pod_result) = stream.next().await {
             match pod_result {
@@ -104,6 +105,13 @@ impl PodWatcher {
                         "Error watching pods"
                     );
                 }
+            }
+
+            // Report cache size every 30 seconds
+            if last_cache_report.elapsed() > std::time::Duration::from_secs(30) {
+                let cache_size = self.cache.size().await;
+                debug!("Pod cache size: {} pods", cache_size);
+                last_cache_report = std::time::Instant::now();
             }
         }
 
@@ -131,6 +139,7 @@ impl PodWatcher {
         // Check if pod is being deleted
         if pod.metadata.deletion_timestamp.is_some() {
             self.cache.remove(&pod_ip).await;
+            debug!("Pod removed from cache: {} ({})", pod_ip, pod_name);
             return;
         }
 
@@ -151,7 +160,16 @@ impl PodWatcher {
             workload_name,
         };
 
-        self.cache.insert(pod_ip, metadata).await;
+        self.cache.insert(pod_ip, metadata.clone()).await;
+
+        debug!(
+            "Pod cached: {} -> {}:{} in namespace {} on node {}",
+            pod_ip,
+            metadata.workload_kind,
+            metadata.workload_name,
+            metadata.namespace,
+            metadata.node_name
+        );
     }
 
     pub(crate) fn extract_workload_info(&self, pod: &Pod) -> (String, String) {
