@@ -85,7 +85,7 @@ impl PodWatcher {
 
     pub async fn start(self) -> Result<()> {
         use kube::runtime::watcher::Config;
-        
+
         let api: Api<Pod> = Api::all(self.client.clone());
         let watcher = watcher(api, Config::default());
 
@@ -113,11 +113,13 @@ impl PodWatcher {
     async fn handle_pod_event(&self, pod: &Pod) {
         let pod_name = pod.name_any();
         let namespace = pod.namespace().unwrap_or_default();
-        
+
         // Extract pod IP
-        let pod_ip = match pod.status.as_ref()
+        let pod_ip = match pod
+            .status
+            .as_ref()
             .and_then(|s| s.pod_ip.as_ref())
-            .and_then(|ip| IpAddr::from_str(ip).ok()) 
+            .and_then(|ip| IpAddr::from_str(ip).ok())
         {
             Some(ip) => ip,
             None => {
@@ -152,48 +154,131 @@ impl PodWatcher {
         self.cache.insert(pod_ip, metadata).await;
     }
 
-    fn extract_workload_info(&self, pod: &Pod) -> (String, String) {
-        if let Some(owner_refs) = &pod.metadata.owner_references {
-            // Look for ReplicaSet first (most common for Deployments)
-            for owner in owner_refs {
-                match owner.kind.as_str() {
-                    "ReplicaSet" => {
-                        // Extract deployment name from ReplicaSet name
-                        // ReplicaSet names are typically: deployment-name-<hash>
-                        let rs_name = &owner.name;
-                        if let Some(dash_pos) = rs_name.rfind('-') {
-                            let potential_deployment = &rs_name[..dash_pos];
-                            // Verify it's a hash by checking if the suffix is alphanumeric
-                            let suffix = &rs_name[dash_pos + 1..];
-                            if suffix.chars().all(|c| c.is_alphanumeric()) && suffix.len() >= 5 {
-                                return ("Deployment".to_string(), potential_deployment.to_string());
-                            }
+    pub(crate) fn extract_workload_info(&self, pod: &Pod) -> (String, String) {
+        extract_workload_info_from_pod(pod)
+    }
+}
+
+// Standalone function for extracting workload info, easier to test
+fn extract_workload_info_from_pod(pod: &Pod) -> (String, String) {
+    if let Some(owner_refs) = &pod.metadata.owner_references {
+        // Look for ReplicaSet first (most common for Deployments)
+        for owner in owner_refs {
+            match owner.kind.as_str() {
+                "ReplicaSet" => {
+                    // Extract deployment name from ReplicaSet name
+                    // ReplicaSet names are typically: deployment-name-<hash>
+                    let rs_name = &owner.name;
+                    if let Some(dash_pos) = rs_name.rfind('-') {
+                        let potential_deployment = &rs_name[..dash_pos];
+                        // Verify it's a hash by checking if the suffix is alphanumeric
+                        let suffix = &rs_name[dash_pos + 1..];
+                        if suffix.chars().all(|c| c.is_alphanumeric()) && suffix.len() >= 5 {
+                            return ("Deployment".to_string(), potential_deployment.to_string());
                         }
-                        return ("ReplicaSet".to_string(), rs_name.clone());
                     }
-                    "DaemonSet" => {
-                        return ("DaemonSet".to_string(), owner.name.clone());
-                    }
-                    "StatefulSet" => {
-                        return ("StatefulSet".to_string(), owner.name.clone());
-                    }
-                    "Job" => {
-                        return ("Job".to_string(), owner.name.clone());
-                    }
-                    "CronJob" => {
-                        return ("CronJob".to_string(), owner.name.clone());
-                    }
-                    _ => {}
+                    return ("ReplicaSet".to_string(), rs_name.clone());
                 }
-            }
-            
-            // If we have any owner, use it
-            if let Some(owner) = owner_refs.first() {
-                return (owner.kind.clone(), owner.name.clone());
+                "DaemonSet" => {
+                    return ("DaemonSet".to_string(), owner.name.clone());
+                }
+                "StatefulSet" => {
+                    return ("StatefulSet".to_string(), owner.name.clone());
+                }
+                "Job" => {
+                    return ("Job".to_string(), owner.name.clone());
+                }
+                "CronJob" => {
+                    return ("CronJob".to_string(), owner.name.clone());
+                }
+                _ => {}
             }
         }
-        
-        // No owner reference - probably a standalone pod
-        ("Pod".to_string(), pod.name_any())
+
+        // If we have any owner, use it
+        if let Some(owner) = owner_refs.first() {
+            return (owner.kind.clone(), owner.name.clone());
+        }
+    }
+
+    // No owner reference - probably a standalone pod
+    ("Pod".to_string(), pod.name_any())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use k8s_openapi::apimachinery::pkg::apis::meta::v1::OwnerReference;
+
+    #[test]
+    fn test_pod_cache_operations() {
+        let cache = PodCache::new();
+        let runtime = tokio::runtime::Runtime::new().unwrap();
+
+        runtime.block_on(async {
+            // Test insert and get
+            let metadata = PodMetadata {
+                pod_name: "test-pod".to_string(),
+                namespace: "default".to_string(),
+                node_name: "node-1".to_string(),
+                workload_kind: "Deployment".to_string(),
+                workload_name: "test-app".to_string(),
+            };
+
+            let ip: IpAddr = "10.0.0.1".parse().unwrap();
+            cache.insert(ip, metadata.clone()).await;
+
+            let retrieved = cache.get(&ip).await;
+            assert!(retrieved.is_some());
+            assert_eq!(retrieved.unwrap().pod_name, "test-pod");
+
+            // Test remove
+            cache.remove(&ip).await;
+            assert!(cache.get(&ip).await.is_none());
+        });
+    }
+
+    #[test]
+    fn test_workload_extraction_deployment() {
+        let mut pod = Pod::default();
+        pod.metadata.owner_references = Some(vec![OwnerReference {
+            api_version: "apps/v1".to_string(),
+            kind: "ReplicaSet".to_string(),
+            name: "my-app-5d7f8c9b6".to_string(),
+            uid: "12345".to_string(),
+            controller: Some(true),
+            block_owner_deletion: Some(true),
+        }]);
+
+        let (kind, name) = extract_workload_info_from_pod(&pod);
+        assert_eq!(kind, "Deployment");
+        assert_eq!(name, "my-app");
+    }
+
+    #[test]
+    fn test_workload_extraction_daemonset() {
+        let mut pod = Pod::default();
+        pod.metadata.owner_references = Some(vec![OwnerReference {
+            api_version: "apps/v1".to_string(),
+            kind: "DaemonSet".to_string(),
+            name: "node-monitor".to_string(),
+            uid: "12345".to_string(),
+            controller: Some(true),
+            block_owner_deletion: Some(true),
+        }]);
+
+        let (kind, name) = extract_workload_info_from_pod(&pod);
+        assert_eq!(kind, "DaemonSet");
+        assert_eq!(name, "node-monitor");
+    }
+
+    #[test]
+    fn test_workload_extraction_no_owner() {
+        let mut pod = Pod::default();
+        pod.metadata.name = Some("standalone-pod".to_string());
+
+        let (kind, name) = extract_workload_info_from_pod(&pod);
+        assert_eq!(kind, "Pod");
+        assert_eq!(name, "standalone-pod");
     }
 }

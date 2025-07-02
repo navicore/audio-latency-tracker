@@ -1,5 +1,5 @@
 # Build stage for eBPF
-FROM rust:1.80 AS ebpf-builder
+FROM rust:1-slim AS ebpf-builder
 
 # Install dependencies for eBPF compilation
 RUN apt-get update && apt-get install -y \
@@ -9,12 +9,13 @@ RUN apt-get update && apt-get install -y \
     linux-headers-generic \
     && rm -rf /var/lib/apt/lists/*
 
+# Install latest nightly toolchain with rust-src and set as default
+RUN rustup toolchain install nightly && \
+    rustup component add rust-src --toolchain nightly && \
+    rustup default nightly
+
 # Install bpf-linker
 RUN cargo install bpf-linker
-
-# Install nightly toolchain with rust-src
-RUN rustup toolchain install nightly-2024-06-01 && \
-    rustup component add rust-src --toolchain nightly-2024-06-01
 
 WORKDIR /build
 
@@ -28,13 +29,17 @@ RUN cargo generate-lockfile
 
 # Build eBPF program
 RUN cd audio-latency-ebpf && \
-    cargo +nightly-2024-06-01 build \
+    cargo build \
     --target bpfel-unknown-none \
     -Z build-std=core \
     --release
 
 # Build stage for userspace
-FROM rust:1.80 AS userspace-builder
+FROM rust:1-slim AS userspace-builder
+
+# Install latest nightly toolchain and set as default
+RUN rustup toolchain install nightly && \
+    rustup default nightly
 
 WORKDIR /build
 
