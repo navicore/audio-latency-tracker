@@ -66,13 +66,21 @@ impl LatencyTracker {
         let dst_ip_addr = std::net::IpAddr::from_str(&dst_ip).ok();
 
         let src_pod = if let Some(ip) = src_ip_addr {
-            self.pod_cache.get(&ip).await
+            let pod = self.pod_cache.get(&ip).await;
+            if pod.is_none() {
+                debug!("No pod found for source IP: {}", ip);
+            }
+            pod
         } else {
             None
         };
 
         let dst_pod = if let Some(ip) = dst_ip_addr {
-            self.pod_cache.get(&ip).await
+            let pod = self.pod_cache.get(&ip).await;
+            if pod.is_none() {
+                debug!("No pod found for destination IP: {}", ip);
+            }
+            pod
         } else {
             None
         };
