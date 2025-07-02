@@ -17,16 +17,11 @@ jobs:
     - name: Checkout code
       uses: actions/checkout@v4
     
-    - name: Install Rust toolchain
+    - name: Install Rust nightly toolchain
       uses: actions-rust-lang/setup-rust-toolchain@v1
       with:
-        toolchain: 1.88
+        toolchain: nightly
         components: rust-src
-    
-    - name: Install nightly toolchain for eBPF
-      run: |
-        rustup toolchain install nightly-2024-06-01
-        rustup component add rust-src --toolchain nightly-2024-06-01
     
     - name: Install bpf-linker
       run: cargo install bpf-linker
