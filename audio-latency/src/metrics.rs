@@ -44,7 +44,6 @@ impl MetricsCollector {
     /// Currently not used because we're logging all events as JSON for external analysis.
     /// This method is preserved for future use when we want to expose aggregate latency
     /// metrics in Prometheus for real-time dashboards (without signature cardinality).
-    /// TODO: Call this for select high-level metrics (e.g., pod-to-pod latency percentiles)
     #[allow(dead_code)]
     pub async fn record_latency(
         &self,
@@ -69,7 +68,6 @@ impl MetricsCollector {
     /// Not currently used as we're logging all events and collision detection
     /// will happen during post-processing. Preserved for future real-time
     /// collision detection when we implement more sophisticated correlation.
-    /// TODO: Implement collision detection based on timestamp proximity
     #[allow(dead_code)]
     pub fn record_collision(&self) {
         SIGNATURE_COLLISIONS.inc();
@@ -81,7 +79,6 @@ impl MetricsCollector {
     /// - Packet parsing errors
     /// - Container lookup failures
     /// - eBPF map overflow
-    /// TODO: Add error tracking throughout the processing pipeline
     #[allow(dead_code)]
     pub fn record_error(&self, error_type: &str) {
         PROCESSING_ERRORS.with_label_values(&[error_type]).inc();

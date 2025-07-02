@@ -123,10 +123,7 @@ impl LatencyTracker {
         self.metrics.record_signature(&src_ip, event.src_port);
 
         // Keep local tracking for immediate feedback (optional)
-        let entry = self
-            .signatures
-            .entry(event.signature)
-            .or_insert_with(Vec::new);
+        let entry = self.signatures.entry(event.signature).or_default();
         if !entry.is_empty() {
             let first_seen = entry[0].0;
             let latency_ns = event.timestamp - first_seen;
@@ -141,8 +138,8 @@ impl LatencyTracker {
         }
         entry.push((
             event.timestamp,
-            format!("{}/{}", node_name, interface),
-            format!("{}:{}", src_ip, event.src_port),
+            format!("{node_name}/{interface}"),
+            format!("{src_ip}:{}", event.src_port),
         ));
 
         // Keep only last 100 occurrences locally
@@ -268,7 +265,7 @@ async fn main() -> Result<()> {
     let _iface_idx = get_interface_index(interface)?;
 
     // Create TC qdisc if it doesn't exist
-    if let Err(_) = tc::qdisc_add_clsact(interface) {
+    if tc::qdisc_add_clsact(interface).is_err() {
         debug!(
             event_type = "qdisc_exists",
             interface = %interface,
