@@ -21,7 +21,7 @@ jobs:
       uses: actions-rust-lang/setup-rust-toolchain@v1
       with:
         toolchain: nightly
-        components: rust-src
+        components: rust-src, rustfmt, clippy
     
     - name: Install bpf-linker
       run: cargo install bpf-linker
