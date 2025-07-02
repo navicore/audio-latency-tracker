@@ -1,4 +1,4 @@
-.PHONY: all build-ebpf build clean test docker-build docker-run
+.PHONY: all build-ebpf build clean test docker-build docker-run fmt fmt-check clippy lint
 
 all: build
 
@@ -25,3 +25,14 @@ docker-run:
 		--network host \
 		-v /sys/kernel/debug:/sys/kernel/debug:ro \
 		audio-latency-tracker:local
+
+fmt:
+	cargo fmt
+
+fmt-check:
+	cargo fmt -- --check
+
+clippy:
+	cargo clippy --workspace --exclude audio-latency-ebpf -- -D warnings
+
+lint: fmt-check clippy

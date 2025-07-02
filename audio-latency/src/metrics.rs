@@ -91,7 +91,7 @@ impl MetricsCollector {
             .route("/metrics", get(metrics_handler))
             .route("/health", get(health_handler));
 
-        log::info!("Starting metrics server on {}", addr);
+        log::info!("Starting metrics server on {addr}");
 
         let listener = tokio::net::TcpListener::bind(addr).await?;
         axum::serve(listener, app).await?;
