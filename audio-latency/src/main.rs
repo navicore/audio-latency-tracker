@@ -174,7 +174,7 @@ async fn main() -> Result<()> {
     );
 
     // Discover network topology
-    let _network_topology = NetworkTopology::discover().unwrap_or_else(|e| {
+    let network_topology = NetworkTopology::discover().unwrap_or_else(|e| {
         warn!(
             event_type = "network_discovery_error",
             error = %e,
@@ -266,30 +266,72 @@ async fn main() -> Result<()> {
         // This would require adding a map to the eBPF program for port filtering
     }
 
-    // Attach TC program
+    // Attach TC program to discovered pod interfaces
     let program: &mut SchedClassifier = ebpf.program_mut("tc_ingress").unwrap().try_into()?;
     program.load()?;
 
-    // Get interface index
-    let _iface_idx = get_interface_index(interface)?;
-
-    // Create TC qdisc if it doesn't exist
-    if tc::qdisc_add_clsact(interface).is_err() {
-        debug!(
-            event_type = "qdisc_exists",
-            interface = %interface,
-            "clsact qdisc already exists"
-        );
-    }
-
-    program
-        .attach(interface, TcAttachType::Ingress)
-        .context("Failed to attach TC program")?;
+    // Get interfaces to monitor - use discovered pod interfaces or fallback to CLI/config
+    let interfaces_to_monitor = if !network_topology.pod_interfaces.is_empty() {
+        network_topology.pod_interfaces.clone()
+    } else {
+        vec![interface.to_string()]
+    };
 
     info!(
-        event_type = "tc_attached",
-        interface = %interface,
-        "Attached TC program to interface"
+        event_type = "interfaces_selected",
+        interfaces = ?interfaces_to_monitor,
+        "Selected interfaces for monitoring"
+    );
+
+    // Attach to all selected interfaces
+    let mut attached_interfaces = Vec::new();
+    for iface in &interfaces_to_monitor {
+        // Verify interface exists
+        if let Err(e) = get_interface_index(iface) {
+            warn!(
+                event_type = "interface_not_found",
+                interface = %iface,
+                error = %e,
+                "Skipping interface - not found"
+            );
+            continue;
+        }
+
+        // Create TC qdisc if it doesn't exist
+        if tc::qdisc_add_clsact(iface).is_err() {
+            debug!(
+                event_type = "qdisc_exists",
+                interface = %iface,
+                "clsact qdisc already exists"
+            );
+        }
+
+        // Attach program to interface
+        if let Err(e) = program.attach(iface, TcAttachType::Ingress) {
+            warn!(
+                event_type = "tc_attach_failed",
+                interface = %iface,
+                error = %e,
+                "Failed to attach TC program to interface"
+            );
+        } else {
+            attached_interfaces.push(iface.clone());
+            info!(
+                event_type = "tc_attached",
+                interface = %iface,
+                "Successfully attached TC program to interface"
+            );
+        }
+    }
+
+    if attached_interfaces.is_empty() {
+        anyhow::bail!("Failed to attach TC program to any interface");
+    }
+
+    info!(
+        event_type = "tc_attachment_complete",
+        attached_interfaces = ?attached_interfaces,
+        "TC program attached to all available interfaces"
     );
 
     // Set up perf event array
@@ -348,13 +390,13 @@ async fn main() -> Result<()> {
             .unwrap_or_else(|_| "unknown".to_string())
     });
 
-    let interface_clone = interface.to_string();
+    let interfaces_summary = attached_interfaces.join(",");
 
     // Process events in main task
     let process_task = task::spawn(async move {
         while let Some(event) = rx.recv().await {
             tracker
-                .process_event(event, &interface_clone, &node_name)
+                .process_event(event, &interfaces_summary, &node_name)
                 .await;
         }
     });
