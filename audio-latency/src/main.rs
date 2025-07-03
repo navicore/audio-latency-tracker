@@ -89,43 +89,26 @@ impl LatencyTracker {
         let now = chrono::Utc::now();
         let timestamp_human = now.format("%Y-%m-%dT%H:%M:%S.%9fZ").to_string();
 
-        // Log as structured event with pod information
-        if src_pod.is_some() || dst_pod.is_some() {
-            info!(
-                event_type = "audio_signature",
-                timestamp_ns = event.timestamp,
-                signature = event.signature,
-                node = node_name,
-                interface = interface,
-                src_ip = %src_ip,
-                src_port = event.src_port,
-                src_pod = src_pod.as_ref().map(|p| &p.pod_name),
-                src_namespace = src_pod.as_ref().map(|p| &p.namespace),
-                src_workload = src_pod.as_ref().map(|p| format!("{}/{}", p.workload_kind, p.workload_name)),
-                dst_ip = %dst_ip,
-                dst_port = event.dst_port,
-                dst_pod = dst_pod.as_ref().map(|p| &p.pod_name),
-                dst_namespace = dst_pod.as_ref().map(|p| &p.namespace),
-                dst_workload = dst_pod.as_ref().map(|p| format!("{}/{}", p.workload_kind, p.workload_name)),
-                timestamp_human = %timestamp_human,
-                "Audio signature detected"
-            );
-        } else {
-            // No pod info available, log without it
-            info!(
-                event_type = "audio_signature",
-                timestamp_ns = event.timestamp,
-                signature = event.signature,
-                node = node_name,
-                interface = interface,
-                src_ip = %src_ip,
-                src_port = event.src_port,
-                dst_ip = %dst_ip,
-                dst_port = event.dst_port,
-                timestamp_human = %timestamp_human,
-                "Audio signature detected"
-            );
-        }
+        // Log as structured event with pod information (use "unknown" for missing data)
+        info!(
+            event_type = "audio_signature",
+            timestamp_ns = event.timestamp,
+            signature = event.signature,
+            node = node_name,
+            interface = interface,
+            src_ip = %src_ip,
+            src_port = event.src_port,
+            src_pod = src_pod.as_ref().map(|p| p.pod_name.as_str()).unwrap_or("unknown"),
+            src_namespace = src_pod.as_ref().map(|p| p.namespace.as_str()).unwrap_or("unknown"),
+            src_workload = src_pod.as_ref().map(|p| format!("{}/{}", p.workload_kind, p.workload_name)).unwrap_or_else(|| "unknown".to_string()),
+            dst_ip = %dst_ip,
+            dst_port = event.dst_port,
+            dst_pod = dst_pod.as_ref().map(|p| p.pod_name.as_str()).unwrap_or("unknown"),
+            dst_namespace = dst_pod.as_ref().map(|p| p.namespace.as_str()).unwrap_or("unknown"),
+            dst_workload = dst_pod.as_ref().map(|p| format!("{}/{}", p.workload_kind, p.workload_name)).unwrap_or_else(|| "unknown".to_string()),
+            timestamp_human = %timestamp_human,
+            "Audio signature detected"
+        );
 
         // Also update metrics for general monitoring (not per-signature)
         self.metrics.record_signature(&src_ip, event.src_port);
