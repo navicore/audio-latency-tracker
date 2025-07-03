@@ -92,6 +92,7 @@ impl NetworkTopology {
         }
     }
     
+    #[allow(dead_code)]
     pub fn get_recommended_interfaces(&self) -> Vec<String> {
         // Return interfaces we should monitor for pod traffic
         if !self.pod_interfaces.is_empty() {
@@ -131,7 +132,7 @@ fn parse_ip_addr_output(output: &str) -> Result<Vec<NetworkInterface>> {
         let line = line.trim();
         
         // Interface line: "2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 9001"
-        if let Some(colon_pos) = line.find(':') {
+        if let Some(_colon_pos) = line.find(':') {
             if line.chars().nth(0).unwrap_or(' ').is_ascii_digit() {
                 // Save previous interface
                 if let Some(iface) = current_interface.take() {
@@ -323,6 +324,7 @@ fn identify_pod_interfaces(interfaces: &[NetworkInterface]) -> Vec<String> {
 }
 
 // Metrics integration
+#[allow(dead_code)]
 pub fn create_network_metrics(topology: &NetworkTopology) -> HashMap<String, f64> {
     let mut metrics = HashMap::new();
     

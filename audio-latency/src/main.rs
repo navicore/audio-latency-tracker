@@ -175,7 +175,7 @@ async fn main() -> Result<()> {
 
 
     // Discover network topology
-    let network_topology = NetworkTopology::discover().unwrap_or_else(|e| {
+    let _network_topology = NetworkTopology::discover().unwrap_or_else(|e| {
         warn!(
             event_type = "network_discovery_error",
             error = %e,
