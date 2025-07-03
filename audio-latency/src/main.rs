@@ -256,19 +256,51 @@ async fn main() -> Result<()> {
         );
     }
 
+    // Set configuration in eBPF map
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct AudioConfig {
+        min_packet_size: u32,
+    }
+
+    unsafe impl aya::Pod for AudioConfig {}
+
+    let audio_config = AudioConfig {
+        min_packet_size: config.min_audio_packet_size,
+    };
+
+    let mut config_map: aya::maps::Array<_, AudioConfig> =
+        aya::maps::Array::try_from(ebpf.map_mut("CONFIG").unwrap())?;
+    config_map.set(0, audio_config, 0)?;
+
+    info!(
+        event_type = "ebpf_config_set",
+        min_audio_packet_size = config.min_audio_packet_size,
+        "Configured eBPF with minimum audio packet size"
+    );
+
     // TODO: Configure port filtering if specified
     if let Some(ref ports) = config.audio_ports {
         debug!(
             event_type = "port_filter_configured",
             ports = ?ports,
-            "Port filtering configured"
+            "Port filtering configured (not yet implemented in eBPF)"
         );
         // This would require adding a map to the eBPF program for port filtering
     }
 
-    // Attach TC program to discovered pod interfaces
-    let program: &mut SchedClassifier = ebpf.program_mut("tc_ingress").unwrap().try_into()?;
-    program.load()?;
+    // Load TC programs
+    {
+        let ingress_program: &mut SchedClassifier =
+            ebpf.program_mut("tc_ingress").unwrap().try_into()?;
+        ingress_program.load()?;
+    }
+
+    {
+        let egress_program: &mut SchedClassifier =
+            ebpf.program_mut("tc_egress").unwrap().try_into()?;
+        egress_program.load()?;
+    }
 
     // Get interfaces to monitor - use discovered pod interfaces or fallback to CLI/config
     let interfaces_to_monitor = if !network_topology.pod_interfaces.is_empty() {
@@ -283,7 +315,7 @@ async fn main() -> Result<()> {
         "Selected interfaces for monitoring"
     );
 
-    // Attach to all selected interfaces
+    // Attach to all selected interfaces (both ingress and egress)
     let mut attached_interfaces = Vec::new();
     for iface in &interfaces_to_monitor {
         // Verify interface exists
@@ -306,21 +338,52 @@ async fn main() -> Result<()> {
             );
         }
 
-        // Attach program to interface
-        if let Err(e) = program.attach(iface, TcAttachType::Ingress) {
-            warn!(
-                event_type = "tc_attach_failed",
-                interface = %iface,
-                error = %e,
-                "Failed to attach TC program to interface"
-            );
-        } else {
+        let mut interface_attached = false;
+
+        // Attach ingress program to interface
+        {
+            let ingress_program: &mut SchedClassifier =
+                ebpf.program_mut("tc_ingress").unwrap().try_into()?;
+            if let Err(e) = ingress_program.attach(iface, TcAttachType::Ingress) {
+                warn!(
+                    event_type = "tc_ingress_attach_failed",
+                    interface = %iface,
+                    error = %e,
+                    "Failed to attach TC ingress program to interface"
+                );
+            } else {
+                interface_attached = true;
+                info!(
+                    event_type = "tc_ingress_attached",
+                    interface = %iface,
+                    "Successfully attached TC ingress program to interface"
+                );
+            }
+        }
+
+        // Attach egress program to interface
+        {
+            let egress_program: &mut SchedClassifier =
+                ebpf.program_mut("tc_egress").unwrap().try_into()?;
+            if let Err(e) = egress_program.attach(iface, TcAttachType::Egress) {
+                warn!(
+                    event_type = "tc_egress_attach_failed",
+                    interface = %iface,
+                    error = %e,
+                    "Failed to attach TC egress program to interface"
+                );
+            } else {
+                interface_attached = true;
+                info!(
+                    event_type = "tc_egress_attached",
+                    interface = %iface,
+                    "Successfully attached TC egress program to interface"
+                );
+            }
+        }
+
+        if interface_attached {
             attached_interfaces.push(iface.clone());
-            info!(
-                event_type = "tc_attached",
-                interface = %iface,
-                "Successfully attached TC program to interface"
-            );
         }
     }
 
@@ -331,7 +394,7 @@ async fn main() -> Result<()> {
     info!(
         event_type = "tc_attachment_complete",
         attached_interfaces = ?attached_interfaces,
-        "TC program attached to all available interfaces"
+        "TC programs (ingress/egress) attached to all available interfaces"
     );
 
     // Set up perf event array
