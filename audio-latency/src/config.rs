@@ -39,6 +39,11 @@ pub struct Config {
     pub flow_timeout_ms: u64,
 
     pub perf_buffer_size: u32,
+
+    /// Minimum TCP payload size to consider for audio detection (bytes)
+    /// Audio packets are typically larger than control packets
+    /// Default: 256 bytes, Production example: 2048 bytes
+    pub min_audio_packet_size: u32,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -118,6 +123,10 @@ impl Config {
                 .unwrap_or_else(|_| "1024".to_string())
                 .parse()
                 .context("Invalid PERF_BUFFER_SIZE")?,
+            min_audio_packet_size: env::var("MIN_AUDIO_PACKET_SIZE")
+                .unwrap_or_else(|_| "256".to_string())
+                .parse()
+                .context("Invalid MIN_AUDIO_PACKET_SIZE")?,
         })
     }
 
@@ -133,6 +142,12 @@ impl Config {
         }
         if self.perf_buffer_size == 0 || !self.perf_buffer_size.is_power_of_two() {
             anyhow::bail!("PERF_BUFFER_SIZE must be a power of 2");
+        }
+        if self.min_audio_packet_size == 0 {
+            anyhow::bail!("MIN_AUDIO_PACKET_SIZE must be greater than 0");
+        }
+        if self.min_audio_packet_size > 65535 {
+            anyhow::bail!("MIN_AUDIO_PACKET_SIZE must be <= 65535 (max TCP payload)");
         }
         Ok(())
     }
@@ -174,6 +189,7 @@ mod tests {
             max_flows: 10000,
             flow_timeout_ms: 30000,
             perf_buffer_size: 1024,
+            min_audio_packet_size: 256,
         };
 
         // Valid config
@@ -219,6 +235,7 @@ mod tests {
             max_flows: 10000,
             flow_timeout_ms: 30000,
             perf_buffer_size: 1024,
+            min_audio_packet_size: 256,
         };
 
         assert!(!config.k8s_enabled);
