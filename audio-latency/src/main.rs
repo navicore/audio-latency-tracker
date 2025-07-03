@@ -15,10 +15,12 @@ use tracing::{debug, info, warn};
 
 mod config;
 mod metrics;
+mod network_discovery;
 mod pod_watcher;
 
 use config::Config;
 use metrics::MetricsCollector;
+use network_discovery::NetworkTopology;
 use pod_watcher::{PodCache, PodWatcher};
 
 #[derive(Debug, Parser)]
@@ -170,6 +172,22 @@ async fn main() -> Result<()> {
         k8s_enabled = config.k8s_enabled,
         "Starting audio latency tracker"
     );
+
+    // Discover network topology
+    let _network_topology = NetworkTopology::discover().unwrap_or_else(|e| {
+        warn!(
+            event_type = "network_discovery_error",
+            error = %e,
+            "Failed to discover network topology"
+        );
+        // Return minimal topology
+        NetworkTopology {
+            interfaces: Vec::new(),
+            routes: Vec::new(),
+            default_interface: Some("eth0".to_string()),
+            pod_interfaces: vec!["eth0".to_string()],
+        }
+    });
 
     // Initialize metrics collector
     let metrics = MetricsCollector::new();
