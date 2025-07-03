@@ -93,8 +93,8 @@ fn calculate_audio_signature(data: &[u8]) -> u32 {
     while i < data.len() && i < 64 {
         if i + 1 < data.len() {
             let sample = (data[i] as u16) | ((data[i + 1] as u16) << 8);
-            
-            // Skip silence (near-zero samples)  
+
+            // Skip silence (near-zero samples)
             if sample.abs_diff(0x8000) > 256 {
                 // 0x8000 is silence in 16-bit PCM
                 hash = hash.wrapping_mul(31).wrapping_add(sample as u32);
