@@ -7,7 +7,7 @@ use aya_ebpf::{
     maps::{HashMap, PerfEventArray},
     programs::TcContext,
 };
-use aya_log_ebpf::{info, trace};
+use aya_log_ebpf::info;
 use core::mem;
 
 // Manual struct definitions for network headers
@@ -83,63 +83,24 @@ static FLOW_STATE: HashMap<u64, u32> = HashMap::with_max_entries(10240, 0);
 #[map]
 static CONFIG: aya_ebpf::maps::Array<AudioConfig> = aya_ebpf::maps::Array::with_max_entries(1, 0);
 
-// Optimized audio signature detection with minimal stack usage
+// Simple audio signature for testing - we'll improve once it's working
 #[inline(always)]
 fn calculate_audio_signature(data: &[u8]) -> u32 {
-    // Simplified algorithm to reduce stack usage for eBPF verifier
     let mut hash: u32 = 0;
     let mut i = 0;
-    let mut non_silence_samples = 0;
-    let mut prev_sample = 0x8000u16;
 
-    // Check first few samples for basic audio characteristics
-    let mut high_entropy = false;
-    let mut large_jumps = 0;
-
-    // Process audio as 16-bit PCM samples (reduced to 64 bytes for stack efficiency)
+    // Simple rolling hash - just get it working first
     while i < data.len() && i < 64 {
         if i + 1 < data.len() {
             let sample = (data[i] as u16) | ((data[i + 1] as u16) << 8);
-
-            // Check if sample is non-silence
-            let distance_from_silence = sample.abs_diff(0x8000);
-            if distance_from_silence > 256 {
-                non_silence_samples += 1;
-
-                // Check for large jumps (characteristic of encrypted data)
-                if non_silence_samples > 1 {
-                    let sample_diff = sample.abs_diff(prev_sample);
-                    if sample_diff > 20000 {
-                        large_jumps += 1;
-                    }
-                }
-
-                // Update hash with sample value
+            
+            // Skip silence (near-zero samples)  
+            if sample.abs_diff(0x8000) > 256 {
+                // 0x8000 is silence in 16-bit PCM
                 hash = hash.wrapping_mul(31).wrapping_add(sample as u32);
-                prev_sample = sample;
-            }
-
-            // Simple entropy check - if bytes look too random
-            if i < 8 && (data[i] ^ data[i + 1]) > 0xF0 {
-                high_entropy = true;
             }
         }
         i += 2;
-    }
-
-    // Reject if too few non-silence samples (not real audio)
-    if non_silence_samples < 5 {
-        return 0;
-    }
-
-    // Reject if too many large jumps (likely encrypted)
-    if large_jumps > non_silence_samples / 3 {
-        return 0;
-    }
-
-    // Reject if high entropy detected
-    if high_entropy {
-        return 0;
     }
 
     hash
@@ -190,28 +151,7 @@ fn process_tcp_packet(ctx: TcContext, is_ingress: bool) -> Result<i32, i64> {
     // Calculate payload offset
     let payload_offset = tcp_hdr_offset + (tcp_hdr.doff() * 4) as usize;
 
-    // TRACE: Log all TCP packets we see with direction
-    if is_ingress {
-        trace!(
-            &ctx,
-            "[ingress] TCP packet: {}:{} -> {}:{} payload_len={}",
-            u32::from_be(ip_hdr.saddr),
-            u16::from_be(tcp_hdr.source),
-            u32::from_be(ip_hdr.daddr),
-            u16::from_be(tcp_hdr.dest),
-            ctx.len() as usize - payload_offset
-        );
-    } else {
-        trace!(
-            &ctx,
-            "[egress] TCP packet: {}:{} -> {}:{} payload_len={}",
-            u32::from_be(ip_hdr.saddr),
-            u16::from_be(tcp_hdr.source),
-            u32::from_be(ip_hdr.daddr),
-            u16::from_be(tcp_hdr.dest),
-            ctx.len() as usize - payload_offset
-        );
-    }
+    // Trace logging removed to reduce instruction count
 
     // Try to read some payload data
     let payload_len = ctx.len() as usize - payload_offset;
@@ -221,30 +161,7 @@ fn process_tcp_packet(ctx: TcContext, is_ingress: bool) -> Result<i32, i64> {
 
     // Audio packets are typically larger than control traffic
     if payload_len < min_size as usize {
-        // TRACE: Log why we're skipping this packet
-        if is_ingress {
-            trace!(
-                &ctx,
-                "[ingress] Skipping packet (payload too small): {}:{} -> {}:{} payload_len={} min_required={}",
-                u32::from_be(ip_hdr.saddr),
-                u16::from_be(tcp_hdr.source),
-                u32::from_be(ip_hdr.daddr),
-                u16::from_be(tcp_hdr.dest),
-                payload_len,
-                min_size
-            );
-        } else {
-            trace!(
-                &ctx,
-                "[egress] Skipping packet (payload too small): {}:{} -> {}:{} payload_len={} min_required={}",
-                u32::from_be(ip_hdr.saddr),
-                u16::from_be(tcp_hdr.source),
-                u32::from_be(ip_hdr.daddr),
-                u16::from_be(tcp_hdr.dest),
-                payload_len,
-                min_size
-            );
-        }
+        // Skip small packets silently
         return Ok(TC_ACT_PIPE);
     }
 
@@ -272,48 +189,18 @@ fn process_tcp_packet(ctx: TcContext, is_ingress: bool) -> Result<i32, i64> {
 
         AUDIO_EVENTS.output(&ctx, &event, 0);
 
-        if is_ingress {
-            info!(
-                &ctx,
-                "[ingress] Audio signature detected: {} from {}:{} to {}:{}",
-                signature,
-                u32::from_be(ip_hdr.saddr),
-                u16::from_be(tcp_hdr.source),
-                u32::from_be(ip_hdr.daddr),
-                u16::from_be(tcp_hdr.dest)
-            );
-        } else {
-            info!(
-                &ctx,
-                "[egress] Audio signature detected: {} from {}:{} to {}:{}",
-                signature,
-                u32::from_be(ip_hdr.saddr),
-                u16::from_be(tcp_hdr.source),
-                u32::from_be(ip_hdr.daddr),
-                u16::from_be(tcp_hdr.dest)
-            );
-        }
+        info!(
+            &ctx,
+            "Audio signature: {} dir={} {}:{} -> {}:{}",
+            signature,
+            is_ingress as u8,
+            u32::from_be(ip_hdr.saddr),
+            u16::from_be(tcp_hdr.source),
+            u32::from_be(ip_hdr.daddr),
+            u16::from_be(tcp_hdr.dest)
+        );
     } else {
-        // TRACE: Log packets that didn't generate signatures
-        if is_ingress {
-            trace!(
-                &ctx,
-                "[ingress] No signature (zero hash): {}:{} -> {}:{}",
-                u32::from_be(ip_hdr.saddr),
-                u16::from_be(tcp_hdr.source),
-                u32::from_be(ip_hdr.daddr),
-                u16::from_be(tcp_hdr.dest)
-            );
-        } else {
-            trace!(
-                &ctx,
-                "[egress] No signature (zero hash): {}:{} -> {}:{}",
-                u32::from_be(ip_hdr.saddr),
-                u16::from_be(tcp_hdr.source),
-                u32::from_be(ip_hdr.daddr),
-                u16::from_be(tcp_hdr.dest)
-            );
-        }
+        // No signature generated - skip silently
     }
 
     Ok(TC_ACT_PIPE)
