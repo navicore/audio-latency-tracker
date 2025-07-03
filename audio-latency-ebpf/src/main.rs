@@ -128,10 +128,30 @@ fn try_tc_ingress(ctx: TcContext) -> Result<i32, i64> {
     // Calculate payload offset
     let payload_offset = tcp_hdr_offset + (tcp_hdr.doff() * 4) as usize;
 
+    // TRACE: Log all TCP packets we see
+    trace!(
+        &ctx,
+        "TCP packet: {}:{} -> {}:{} payload_len={}",
+        u32::from_be(ip_hdr.saddr),
+        u16::from_be(tcp_hdr.source),
+        u32::from_be(ip_hdr.daddr),
+        u16::from_be(tcp_hdr.dest),
+        ctx.len() as usize - payload_offset
+    );
+
     // Try to read some payload data
     let payload_len = ctx.len() as usize - payload_offset;
     if payload_len < 64 {
-        // Need at least 64 bytes to analyze
+        // TRACE: Log why we're skipping this packet
+        trace!(
+            &ctx,
+            "Skipping packet (payload too small): {}:{} -> {}:{} payload_len={}",
+            u32::from_be(ip_hdr.saddr),
+            u16::from_be(tcp_hdr.source),
+            u32::from_be(ip_hdr.daddr),
+            u16::from_be(tcp_hdr.dest),
+            payload_len
+        );
         return Ok(TC_ACT_PIPE);
     }
 
@@ -163,6 +183,16 @@ fn try_tc_ingress(ctx: TcContext) -> Result<i32, i64> {
             &ctx,
             "Audio signature detected: {} from {}:{} to {}:{}",
             signature,
+            u32::from_be(ip_hdr.saddr),
+            u16::from_be(tcp_hdr.source),
+            u32::from_be(ip_hdr.daddr),
+            u16::from_be(tcp_hdr.dest)
+        );
+    } else {
+        // TRACE: Log packets that didn't generate signatures
+        trace!(
+            &ctx,
+            "No signature (zero hash): {}:{} -> {}:{}",
             u32::from_be(ip_hdr.saddr),
             u16::from_be(tcp_hdr.source),
             u32::from_be(ip_hdr.daddr),
