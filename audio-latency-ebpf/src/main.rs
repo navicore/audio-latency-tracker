@@ -7,7 +7,7 @@ use aya_ebpf::{
     maps::{HashMap, PerfEventArray},
     programs::TcContext,
 };
-use aya_log_ebpf::info;
+use aya_log_ebpf::{info, trace};
 use core::mem;
 
 // Manual struct definitions for network headers
