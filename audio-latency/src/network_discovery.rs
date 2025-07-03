@@ -109,7 +109,7 @@ fn discover_interfaces() -> Result<Vec<NetworkInterface>> {
     let mut interfaces = Vec::new();
 
     // Use `ip addr show` to get interface information
-    let output = Command::new("ip").args(&["addr", "show"]).output()?;
+    let output = Command::new("ip").args(["addr", "show"]).output()?;
 
     if !output.status.success() {
         warn!(
@@ -134,7 +134,7 @@ fn parse_ip_addr_output(output: &str) -> Result<Vec<NetworkInterface>> {
 
         // Interface line: "2: eth0: <BROADCAST,MULTICAST,UP,LOWER_UP> mtu 9001"
         if let Some(_colon_pos) = line.find(':') {
-            if line.chars().nth(0).unwrap_or(' ').is_ascii_digit() {
+            if line.chars().next().unwrap_or(' ').is_ascii_digit() {
                 // Save previous interface
                 if let Some(iface) = current_interface.take() {
                     interfaces.push(iface);
@@ -212,7 +212,7 @@ fn discover_routes() -> Result<Vec<RouteEntry>> {
     let mut routes = Vec::new();
 
     // Use `ip route show` to get routing information
-    let output = Command::new("ip").args(&["route", "show"]).output()?;
+    let output = Command::new("ip").args(["route", "show"]).output()?;
 
     if !output.status.success() {
         warn!(
@@ -355,7 +355,7 @@ pub fn create_network_metrics(topology: &NetworkTopology) -> HashMap<String, f64
 
     for (iface_type, count) in type_counts {
         metrics.insert(
-            format!("network_interfaces_by_type_{}", iface_type),
+            format!("network_interfaces_by_type_{iface_type}"),
             count as f64,
         );
     }
