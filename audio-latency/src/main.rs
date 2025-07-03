@@ -15,13 +15,13 @@ use tracing::{debug, info, warn};
 
 mod config;
 mod metrics;
-mod pod_watcher;
 mod network_discovery;
+mod pod_watcher;
 
 use config::Config;
 use metrics::MetricsCollector;
-use pod_watcher::{PodCache, PodWatcher};
 use network_discovery::NetworkTopology;
+use pod_watcher::{PodCache, PodWatcher};
 
 #[derive(Debug, Parser)]
 struct Opt {
@@ -172,7 +172,6 @@ async fn main() -> Result<()> {
         k8s_enabled = config.k8s_enabled,
         "Starting audio latency tracker"
     );
-
 
     // Discover network topology
     let _network_topology = NetworkTopology::discover().unwrap_or_else(|e| {
