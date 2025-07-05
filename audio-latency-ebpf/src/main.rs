@@ -83,27 +83,91 @@ static FLOW_STATE: HashMap<u64, u32> = HashMap::with_max_entries(10240, 0);
 #[map]
 static CONFIG: aya_ebpf::maps::Array<AudioConfig> = aya_ebpf::maps::Array::with_max_entries(1, 0);
 
-// Simple audio signature for testing - we'll improve once it's working
+// Content-based anchoring for reproducible audio signatures
 #[inline(always)]
 fn calculate_audio_signature(data: &[u8]) -> u32 {
+    // Find an anchor point in the audio data
+    let anchor_offset = find_audio_anchor(data);
+    if anchor_offset == 0 {
+        return 0; // No valid anchor found
+    }
+    
+    // Calculate signature from anchor point
     let mut hash: u32 = 0;
-    let mut i = 0;
-
-    // Simple rolling hash - just get it working first
-    while i < data.len() && i < 64 {
-        if i + 1 < data.len() {
-            let sample = (data[i] as u16) | ((data[i + 1] as u16) << 8);
-
-            // Skip silence (near-zero samples)
-            if sample.abs_diff(0x8000) > 256 {
-                // 0x8000 is silence in 16-bit PCM
-                hash = hash.wrapping_mul(31).wrapping_add(sample as u32);
-            }
-        }
+    let mut sampled = 0;
+    let start = anchor_offset;
+    let end = core::cmp::min(data.len(), anchor_offset + 64); // 64 bytes from anchor
+    
+    let mut i = start;
+    while i + 1 < end {
+        let sample = (data[i] as u16) | ((data[i + 1] as u16) << 8);
+        hash = hash.wrapping_mul(31).wrapping_add(sample as u32);
+        sampled += 1;
         i += 2;
     }
+    
+    // Only return signature if we got enough samples
+    if sampled >= 16 {
+        hash
+    } else {
+        0
+    }
+}
 
-    hash
+// Find a reproducible anchor point in audio data
+#[inline(always)]
+fn find_audio_anchor(data: &[u8]) -> usize {
+    // For 16-bit PCM audio, find transition from silence to sound
+    // This creates a reproducible anchor point across observations
+    
+    let mut i = 0;
+    let mut silence_count = 0;
+    
+    // Scan for silence followed by non-silence (common pattern)
+    while i + 3 < data.len() && i < 256 {
+        if i + 1 >= data.len() { break; }
+        
+        let sample = (data[i] as u16) | ((data[i + 1] as u16) << 8);
+        let distance_from_silence = sample.abs_diff(0x8000);
+        
+        if distance_from_silence <= 256 {
+            // This is silence
+            silence_count += 1;
+        } else if silence_count >= 4 {
+            // Found transition from silence (8+ bytes) to sound
+            // This is our anchor point
+            return i;
+        } else {
+            // Reset if we hit sound without enough silence
+            silence_count = 0;
+        }
+        
+        i += 2;
+    }
+    
+    // Fallback: Look for zero-crossing as anchor
+    if data.len() >= 64 {
+        i = 0;
+        let mut prev_sample = 0x8000u16;
+        
+        while i + 1 < data.len() && i < 128 {
+            let sample = (data[i] as u16) | ((data[i + 1] as u16) << 8);
+            
+            // Check for zero crossing (sign change around 0x8000)
+            if (prev_sample < 0x8000 && sample >= 0x8000) || 
+               (prev_sample >= 0x8000 && sample < 0x8000) {
+                // Use zero crossing as anchor if no silence found
+                if i >= 4 { // Make sure we have some context
+                    return i - 4;
+                }
+            }
+            
+            prev_sample = sample;
+            i += 2;
+        }
+    }
+    
+    0 // No anchor found
 }
 
 #[classifier]
@@ -130,7 +194,7 @@ fn try_tc_egress(ctx: TcContext) -> Result<i32, i64> {
     process_tcp_packet(ctx, false)
 }
 
-fn process_tcp_packet(ctx: TcContext, is_ingress: bool) -> Result<i32, i64> {
+fn process_tcp_packet(ctx: TcContext, _is_ingress: bool) -> Result<i32, i64> {
     let eth_hdr: EthHdr = ctx.load(0).map_err(|_| 1i64)?;
 
     // Only process IPv4 packets (0x0800 in network byte order)
@@ -165,9 +229,9 @@ fn process_tcp_packet(ctx: TcContext, is_ingress: bool) -> Result<i32, i64> {
         return Ok(TC_ACT_PIPE);
     }
 
-    // Read payload data
-    let mut buf = [0u8; 128];
-    let read_len = core::cmp::min(payload_len, 128);
+    // Read payload data - balanced for stack size and anchor detection
+    let mut buf = [0u8; 256];
+    let read_len = core::cmp::min(payload_len, 256);
 
     for i in 0..read_len {
         buf[i] = ctx.load::<u8>(payload_offset + i).map_err(|_| 1i64)?;
@@ -189,11 +253,11 @@ fn process_tcp_packet(ctx: TcContext, is_ingress: bool) -> Result<i32, i64> {
 
         AUDIO_EVENTS.output(&ctx, &event, 0);
 
+        // Log signature with direction
         info!(
             &ctx,
-            "Audio signature: {} dir={} {}:{} -> {}:{}",
+            "Audio sig={} {}:{} -> {}:{}",
             signature,
-            is_ingress as u8,
             u32::from_be(ip_hdr.saddr),
             u16::from_be(tcp_hdr.source),
             u32::from_be(ip_hdr.daddr),
