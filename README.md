@@ -1,3 +1,8 @@
+<!-- ghmig:moved -->
+> **This repository has moved to [https://git.navicore.tech/navicore/audio-latency-tracker](https://git.navicore.tech/navicore/audio-latency-tracker).**
+>
+> The GitHub copy is archived and no longer maintained.
+
 [![Docker Build and Publish](https://github.com/navicore/audio-latency-tracker/actions/workflows/docker-publish.yml/badge.svg)](https://github.com/navicore/audio-latency-tracker/actions/workflows/docker-publish.yml)
 [![Run Tests](https://github.com/navicore/audio-latency-tracker/actions/workflows/test.yml/badge.svg)](https://github.com/navicore/audio-latency-tracker/actions/workflows/test.yml)
 [![Docker Hub](https://img.shields.io/docker/v/navicore/audio-latency-tracker?label=docker&sort=semver)](https://hub.docker.com/r/YOUR_DOCKERHUB_USERNAME/audio-latency-tracker)
